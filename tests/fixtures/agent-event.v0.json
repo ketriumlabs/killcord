@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ketriumlabs.dev/schema/agent-event.v0.json",
+  "title": "Ketrium Agent Event v0",
+  "description": "Local pinned copy of agent-activity-ledger's schema, used to contract-test killcord's LedgerSink payloads. Keep in sync with agent-activity-ledger/schema/agent-event.v0.json.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ts", "actor", "action", "source"],
+  "properties": {
+    "id": { "type": "string" },
+    "ts": { "type": "string", "format": "date-time" },
+    "received_at": { "type": "string", "format": "date-time" },
+    "actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agent"],
+      "properties": {
+        "agent": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "session": { "type": "string", "maxLength": 200 },
+        "model": { "type": "string", "maxLength": 200 }
+      }
+    },
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "verb"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["purchase", "email.send", "message.send", "file.write", "http.request", "auth", "schedule", "custom"]
+        },
+        "verb": { "type": "string", "minLength": 1, "maxLength": 500 }
+      }
+    },
+    "target": { "type": "string", "maxLength": 500 },
+    "amount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "currency"],
+      "properties": {
+        "value": { "type": "number" },
+        "currency": { "type": "string", "minLength": 3, "maxLength": 3 }
+      }
+    },
+    "justification": { "type": "string", "maxLength": 2000 },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["integration"],
+      "properties": {
+        "integration": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "version": { "type": "string", "maxLength": 50 }
+      }
+    },
+    "metadata": { "type": "object" },
+    "prev_hash": { "type": "string" },
+    "hash": { "type": "string" }
+  }
+}

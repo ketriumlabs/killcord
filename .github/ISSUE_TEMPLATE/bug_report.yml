@@ -1,0 +1,45 @@
+name: Bug report
+description: Something in killcord isn't working as expected
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: A `Tripwire` config + the loop that triggers the bug, if possible.
+      render: python
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - core (Tripwire/limits)
+        - snapshot/resume
+        - pause server
+        - adapter (OpenAI/Anthropic/LangChain)
+        - CLI
+        - other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: killcord version
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: "Windows 11 / macOS 15 / Ubuntu 24.04"
+    validations:
+      required: true
