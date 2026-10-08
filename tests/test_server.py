@@ -55,8 +55,7 @@ def test_decide_opposite_verdict_returns_conflict(client: TestClient, store_dir:
     assert resp.json() == {
         "error": "decision_conflict",
         "detail": (
-            f"snapshot {snapshot.token!r} already has decision 'approved'; "
-            "it cannot be changed"
+            f"snapshot {snapshot.token!r} already has decision 'approved'; it cannot be changed"
         ),
     }
     pending = store.read_pending()
