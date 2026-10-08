@@ -16,8 +16,11 @@ Two kinds of state live on disk here, both as plain JSON files anyone can
 from __future__ import annotations
 
 import json
+import os
 import secrets
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
@@ -39,6 +42,14 @@ class AlreadyConsumedError(Exception):
     This is the at-most-once guarantee: the second caller must not be told
     it's safe to proceed.
     """
+
+
+class PendingSnapshotExistsError(Exception):
+    """Raised when a new trip would replace an unresolved pending snapshot."""
+
+
+class DecisionAlreadyRecordedError(Exception):
+    """Raised when a recorded decision is changed to the opposite verdict."""
 
 
 @dataclass
@@ -104,6 +115,40 @@ class SnapshotStore:
         self.directory.mkdir(parents=True, exist_ok=True)
         self._state_path = self.directory / "state.json"
         self._pending_path = self.directory / "pending.json"
+        self._lock_path = self.directory / ".snapshot.lock"
+
+    @contextmanager
+    def _exclusive_lock(self) -> Iterator[None]:
+        """Serialize snapshot transitions across threads and processes."""
+        with self._lock_path.open("a+b") as lock_file:
+            if lock_file.seek(0, 2) == 0:
+                lock_file.write(b"\0")
+                lock_file.flush()
+            lock_file.seek(0)
+            if os.name == "nt":
+                import msvcrt
+
+                # getattr keeps mypy portable: the other platform's module is unavailable.
+                locking = getattr(msvcrt, "locking")  # noqa: B009
+                lock = getattr(msvcrt, "LK_LOCK")  # noqa: B009
+                unlock = getattr(msvcrt, "LK_UNLCK")  # noqa: B009
+                locking(lock_file.fileno(), lock, 1)
+                try:
+                    yield
+                finally:
+                    lock_file.seek(0)
+                    locking(lock_file.fileno(), unlock, 1)
+            else:
+                import fcntl
+
+                flock = getattr(fcntl, "flock")  # noqa: B009
+                lock = getattr(fcntl, "LOCK_EX")  # noqa: B009
+                unlock = getattr(fcntl, "LOCK_UN")  # noqa: B009
+                flock(lock_file.fileno(), lock)
+                try:
+                    yield
+                finally:
+                    flock(lock_file.fileno(), unlock)
 
     # ---- counters -------------------------------------------------------
 
@@ -118,13 +163,20 @@ class SnapshotStore:
     # ---- trip / pending ---------------------------------------------------
 
     def write_pending(self, action: Action, reason: str) -> PendingSnapshot:
-        snapshot = PendingSnapshot(
-            token=secrets.token_urlsafe(16),
-            action=action,
-            reason=reason,
-            tripped_at=time.time(),
-        )
-        atomic_write_text(self._pending_path, json.dumps(snapshot.to_dict()))
+        with self._exclusive_lock():
+            current = self.read_pending()
+            if current is not None:
+                raise PendingSnapshotExistsError(
+                    f"snapshot {current.token!r} is still pending; resolve it before "
+                    "recording another trip"
+                )
+            snapshot = PendingSnapshot(
+                token=secrets.token_urlsafe(16),
+                action=action,
+                reason=reason,
+                tripped_at=time.time(),
+            )
+            atomic_write_text(self._pending_path, json.dumps(snapshot.to_dict()))
         return snapshot
 
     def read_pending(self) -> PendingSnapshot | None:
@@ -133,11 +185,20 @@ class SnapshotStore:
         return PendingSnapshot.from_dict(json.loads(self._pending_path.read_text(encoding="utf-8")))
 
     def decide(self, token: str, approved: bool) -> PendingSnapshot:
-        pending = self.read_pending()
-        if pending is None or pending.token != token:
-            raise NoPendingSnapshotError(f"no pending snapshot with token {token!r}")
-        pending.decision = "approved" if approved else "denied"
-        atomic_write_text(self._pending_path, json.dumps(pending.to_dict()))
+        with self._exclusive_lock():
+            pending = self.read_pending()
+            if pending is None or pending.token != token:
+                raise NoPendingSnapshotError(f"no pending snapshot with token {token!r}")
+            requested: DecisionValue = "approved" if approved else "denied"
+            if pending.decision is not None and pending.decision != requested:
+                raise DecisionAlreadyRecordedError(
+                    f"snapshot {token!r} already has decision {pending.decision!r}; "
+                    "it cannot be changed"
+                )
+            if pending.decision == requested:
+                return pending
+            pending.decision = requested
+            atomic_write_text(self._pending_path, json.dumps(pending.to_dict()))
         return pending
 
     def resume(self, token: str) -> Decision:
@@ -147,28 +208,24 @@ class SnapshotStore:
         hasn't been made yet. Raises AlreadyConsumedError if this token was
         already resumed — the at-most-once guarantee.
         """
-        consumed_marker = self.directory / f"pending.json.consumed-{token}"
-        if consumed_marker.exists():
-            raise AlreadyConsumedError(f"snapshot {token!r} was already resumed")
+        with self._exclusive_lock():
+            consumed_marker = self.directory / f"pending.json.consumed-{token}"
+            if consumed_marker.exists():
+                raise AlreadyConsumedError(f"snapshot {token!r} was already resumed")
 
-        pending = self.read_pending()
-        if pending is None or pending.token != token:
-            raise NoPendingSnapshotError(f"no pending snapshot with token {token!r}")
-        if pending.decision is None:
-            raise NoPendingSnapshotError(f"snapshot {token!r} has no decision yet")
+            pending = self.read_pending()
+            if pending is None or pending.token != token:
+                raise NoPendingSnapshotError(f"no pending snapshot with token {token!r}")
+            if pending.decision is None:
+                raise NoPendingSnapshotError(f"snapshot {token!r} has no decision yet")
 
-        # The atomic rename is the linearization point: whichever caller's
-        # rename wins is the only one that gets a Decision back. A truly
-        # concurrent second caller's rename raises FileNotFoundError (source
-        # already moved) — treat that the same as the consumed-marker check
-        # above, since that's exactly what it means.
-        try:
-            atomic_rename(self._pending_path, consumed_marker)
-        except FileNotFoundError as exc:
-            raise AlreadyConsumedError(f"snapshot {token!r} was already resumed") from exc
+            try:
+                atomic_rename(self._pending_path, consumed_marker)
+            except FileNotFoundError as exc:
+                raise AlreadyConsumedError(f"snapshot {token!r} was already resumed") from exc
 
-        return Decision(
-            token=pending.token,
-            approved=pending.decision == "approved",
-            action=pending.action,
-        )
+            return Decision(
+                token=pending.token,
+                approved=pending.decision == "approved",
+                action=pending.action,
+            )

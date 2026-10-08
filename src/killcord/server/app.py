@@ -9,10 +9,14 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
-from killcord.snapshot.store import NoPendingSnapshotError, SnapshotStore
+from killcord.snapshot.store import (
+    DecisionAlreadyRecordedError,
+    NoPendingSnapshotError,
+    SnapshotStore,
+)
 
 _templates_dir = resources.files("killcord.server").joinpath("templates")
 templates = Jinja2Templates(directory=str(_templates_dir))
@@ -34,10 +38,19 @@ def create_app(store_dir: str | Path = "~/.killcord/default") -> FastAPI:
         )
 
     @app.post("/decide/{token}/{verdict}")
-    def decide(token: str, verdict: str) -> RedirectResponse:
+    def decide(token: str, verdict: str) -> Response:
         if verdict not in ("approve", "deny"):
             return RedirectResponse("/", status_code=303)
-        store.decide(token, approved=(verdict == "approve"))
+        try:
+            store.decide(token, approved=(verdict == "approve"))
+        except DecisionAlreadyRecordedError as exc:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "error": "decision_conflict",
+                    "detail": str(exc),
+                },
+            )
         return RedirectResponse("/", status_code=303)
 
     @app.get("/api/status")

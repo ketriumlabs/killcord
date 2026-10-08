@@ -170,8 +170,7 @@ class Tripwire:
         from killcord.notify.ntfy import send_ntfy_notification
 
         message = (
-            f"{reason}\naction: {action.tool} -> {action.target}\n"
-            f"resume: killcord resume {token}"
+            f"{reason}\naction: {action.tool} -> {action.target}\nresume: killcord resume {token}"
         )
         send_ntfy_notification(self.notify_target, title="killcord tripped", message=message)
 
