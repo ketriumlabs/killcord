@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ipaddress
+
 import typer
 
 app = typer.Typer(help="killcord — spending caps, rate limits, and a big red pause button.")
@@ -10,13 +12,27 @@ DEFAULT_STORE = "~/.killcord/default"
 @app.command()
 def serve(
     store: str = typer.Option(DEFAULT_STORE, help="Path to the Tripwire's snapshot store"),
-    host: str = typer.Option("127.0.0.1", help="Bind address"),
+    host: str = typer.Option(
+        "127.0.0.1",
+        help="Bind address (remote access is unsupported and has no built-in authentication)",
+    ),
     port: int = typer.Option(8710, help="Bind port"),
 ) -> None:
     """Start the pause server: the big red button + live status."""
     import uvicorn
 
     from killcord.server.app import create_app
+
+    try:
+        loopback = host.lower() == "localhost" or ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        loopback = False
+    if not loopback:
+        typer.echo(
+            "WARNING: killcord serve has no built-in authentication or remote request protections; "
+            "non-loopback binding exposes the approval endpoint to your network.",
+            err=True,
+        )
 
     app_instance = create_app(store)
     uvicorn.run(app_instance, host=host, port=port)

@@ -75,6 +75,10 @@ instead of going through `tw.check()`. Spend estimation from adapters is
 best-effort — token-cost tables drift; treat `max_spend` as a strong signal,
 not an exact accounting ledger.
 
+The pause server is supported for local use only in v0.1. It defaults to
+`127.0.0.1`; non-loopback binding has no built-in authentication or remote
+request protections and prints a warning. See the [threat model](docs/threat-model.md).
+
 ## Roadmap
 
 See [plan.md](plan.md). TypeScript port, LiteLLM/proxy adapter, and

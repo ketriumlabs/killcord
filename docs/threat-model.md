@@ -36,10 +36,13 @@
   `state.json` to reset counters, or fabricate an "approved" decision in
   `pending.json`. This is a local trust boundary, same as any file-based
   tool — protect the directory with normal filesystem permissions.
-- **The pause server has no authentication in v0.1.** It binds to
-  `127.0.0.1` by default (opting into `--host 0.0.0.0` is explicit and your
-  choice, exposing it to your network with no login). Don't expose it
-  publicly without putting your own auth in front of it.
+- **The pause server is supported for local use only in v0.1.** It binds to
+  `127.0.0.1` by default. It has no built-in authentication, session/CSRF
+  protections, or Host allowlist. A non-loopback `--host` override prints a
+  warning but is still allowed for users who place their own protections in
+  front of it. Do not expose it directly to a LAN or the public internet.
+  Remote and phone-based review are deferred until these protections are
+  designed and implemented together.
 - **Multi-agent coordination.** One Tripwire, one store directory, one set
   of counters. Running multiple agents against the *same* store works
   (that's how state persists across restarts) but there's no per-agent
