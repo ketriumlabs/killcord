@@ -118,7 +118,7 @@ class Tripwire:
         if reason is not None:
             snapshot = self.store.write_pending(action, reason)
             self._notify(snapshot.token, reason, action)
-            self._emit_ledger_event("custom", f"Tripwire tripped: {reason}", action)
+            self._emit_ledger_event("trip", snapshot.trip_id, "tripped", snapshot.tripped_at)
             raise TripwireTripped(snapshot.token, reason, action)
 
         self._record(action, now)
@@ -156,9 +156,10 @@ class Tripwire:
         if decision.approved:
             self._record(decision.action, time.time())
         self._emit_ledger_event(
-            "custom",
-            f"Tripwire resume: {'approved' if decision.approved else 'denied'}",
-            decision.action,
+            "decision",
+            decision.trip_id,
+            "approved" if decision.approved else "denied",
+            decision.event_at,
         )
         return decision
 
@@ -174,10 +175,23 @@ class Tripwire:
         )
         send_ntfy_notification(self.notify_target, title="killcord tripped", message=message)
 
-    def _emit_ledger_event(self, action_type: str, verb: str, action: Action) -> None:
+    def _emit_ledger_event(
+        self, event_kind: str, trip_id: str, verdict: str, event_at: float
+    ) -> None:
         if self.ledger is None:
             return
-        self.ledger.emit(action_type=action_type, verb=verb, target=action.target)
+        try:
+            self.ledger.emit(
+                action_type="custom",
+                verb=f"Tripwire {verdict}",
+                trip_id=trip_id,
+                event_key=f"killcord:{trip_id}:{event_kind}",
+                event_at=event_at,
+            )
+        except Exception:
+            # Audit delivery is best effort and must never change enforcement,
+            # counter, or resume semantics.
+            return
 
 
 def guarded(tripwire: Tripwire) -> Callable[[Callable[P, R]], Callable[P, R]]:
