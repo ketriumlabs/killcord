@@ -128,20 +128,27 @@ class SnapshotStore:
             if os.name == "nt":
                 import msvcrt
 
-                msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+                # getattr keeps mypy portable: the other platform's module is unavailable.
+                locking = getattr(msvcrt, "locking")  # noqa: B009
+                lock = getattr(msvcrt, "LK_LOCK")  # noqa: B009
+                unlock = getattr(msvcrt, "LK_UNLCK")  # noqa: B009
+                locking(lock_file.fileno(), lock, 1)
                 try:
                     yield
                 finally:
                     lock_file.seek(0)
-                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+                    locking(lock_file.fileno(), unlock, 1)
             else:
                 import fcntl
 
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+                flock = getattr(fcntl, "flock")  # noqa: B009
+                lock = getattr(fcntl, "LOCK_EX")  # noqa: B009
+                unlock = getattr(fcntl, "LOCK_UN")  # noqa: B009
+                flock(lock_file.fileno(), lock)
                 try:
                     yield
                 finally:
-                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+                    flock(lock_file.fileno(), unlock)
 
     # ---- counters -------------------------------------------------------
 
