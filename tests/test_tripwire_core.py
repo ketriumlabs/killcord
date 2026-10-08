@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import contextlib
 from decimal import Decimal
 from pathlib import Path
 
@@ -65,8 +64,12 @@ def test_spend_never_exceeds_cap(tmp_path_factory, spends: list[Decimal], cap: D
     store_dir = tmp_path_factory.mktemp("kc")
     tw = make_tripwire(store_dir, max_spend=cap)
     for spend in spends:
-        with contextlib.suppress(TripwireTripped):
+        try:
             tw.check(Action(tool="buy", spend=spend))
+        except TripwireTripped:
+            # A tripped action remains pending until explicitly decided and
+            # consumed; subsequent actions cannot be checked in this run.
+            break
     assert tw.store.load_state().spent <= cap
 
 

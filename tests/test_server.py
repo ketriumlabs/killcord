@@ -44,6 +44,26 @@ def test_decide_approve_via_http(client: TestClient, store_dir: Path) -> None:
     assert pending.decision == "approved"
 
 
+def test_decide_opposite_verdict_returns_conflict(client: TestClient, store_dir: Path) -> None:
+    store = SnapshotStore(store_dir)
+    snapshot = store.write_pending(Action(tool="buy"), "cap exceeded")
+    store.decide(snapshot.token, approved=True)
+
+    resp = client.post(f"/decide/{snapshot.token}/deny", follow_redirects=False)
+
+    assert resp.status_code == 409
+    assert resp.json() == {
+        "error": "decision_conflict",
+        "detail": (
+            f"snapshot {snapshot.token!r} already has decision 'approved'; "
+            "it cannot be changed"
+        ),
+    }
+    pending = store.read_pending()
+    assert pending is not None
+    assert pending.decision == "approved"
+
+
 def test_api_status_json(client: TestClient, store_dir: Path) -> None:
     resp = client.get("/api/status")
     assert resp.status_code == 200

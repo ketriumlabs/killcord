@@ -29,6 +29,13 @@ Tripwire.resume(token)
       caller is responsible for actually performing the action
 ```
 
+Only one trip may be pending in a store at a time. A later trip raises
+`PendingSnapshotExistsError` until the existing trip is consumed; it cannot
+silently replace the action awaiting review. Once a decision is recorded, it
+is final: repeating the same verdict is safe, while requesting the opposite
+verdict returns HTTP 409 from the pause server (and raises
+`DecisionAlreadyRecordedError` through the store API).
+
 ## The three files on disk
 
 Everything lives under the Tripwire's `store` directory (default

@@ -9,6 +9,7 @@ must never be resumable twice.
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
@@ -20,7 +21,9 @@ from killcord.snapshot.atomic import atomic_write_text
 from killcord.snapshot.store import (
     AlreadyConsumedError,
     CounterState,
+    DecisionAlreadyRecordedError,
     NoPendingSnapshotError,
+    PendingSnapshotExistsError,
     SnapshotStore,
 )
 
@@ -135,3 +138,65 @@ def test_new_trip_after_previous_consumed_snapshot_works(tmp_path: Path) -> None
     store.decide(second.token, approved=True)
     decision = store.resume(second.token)
     assert decision.token == second.token
+
+
+def test_new_trip_does_not_overwrite_unresolved_pending_snapshot(tmp_path: Path) -> None:
+    store = SnapshotStore(tmp_path)
+    first = store.write_pending(Action(tool="first"), reason="first trip")
+
+    with pytest.raises(PendingSnapshotExistsError, match=first.token):
+        store.write_pending(Action(tool="second"), reason="second trip")
+
+    pending = store.read_pending()
+    assert pending is not None
+    assert pending.token == first.token
+    assert pending.action.tool == "first"
+    assert pending.reason == "first trip"
+
+
+def test_simultaneous_trips_only_record_one_pending_snapshot(tmp_path: Path) -> None:
+    store = SnapshotStore(tmp_path)
+
+    def trip(tool: str) -> str:
+        try:
+            return store.write_pending(Action(tool=tool), reason=f"{tool} trip").token
+        except PendingSnapshotExistsError:
+            return "rejected"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(trip, ["first", "second"]))
+
+    assert results.count("rejected") == 1
+    pending = store.read_pending()
+    assert pending is not None
+    assert pending.token in results
+    assert pending.action.tool in ("first", "second")
+
+
+@pytest.mark.parametrize(
+    ("initial", "opposite"),
+    [(True, False), (False, True)],
+)
+def test_recorded_decision_cannot_be_reversed(
+    tmp_path: Path, initial: bool, opposite: bool
+) -> None:
+    store = SnapshotStore(tmp_path)
+    snapshot = store.write_pending(Action(tool="buy"), reason="cap exceeded")
+    store.decide(snapshot.token, approved=initial)
+
+    with pytest.raises(DecisionAlreadyRecordedError):
+        store.decide(snapshot.token, approved=opposite)
+
+    pending = store.read_pending()
+    assert pending is not None
+    assert pending.decision == ("approved" if initial else "denied")
+
+
+def test_repeating_same_decision_is_idempotent(tmp_path: Path) -> None:
+    store = SnapshotStore(tmp_path)
+    snapshot = store.write_pending(Action(tool="buy"), reason="cap exceeded")
+
+    first = store.decide(snapshot.token, approved=True)
+    again = store.decide(snapshot.token, approved=True)
+
+    assert first.decision == again.decision == "approved"
