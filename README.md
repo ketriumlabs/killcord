@@ -86,6 +86,12 @@ Trip and resume events can be forwarded to
 [agent-activity-ledger](https://github.com/ketriumlabs/agent-activity-ledger)
 by passing `ledger=LedgerSink(url=..., api_key=...)` — see
 [`src/killcord/ledger.py`](src/killcord/ledger.py).
+The integration sends only a stable, non-secret trip ID and generic trip/decision
+verbs; it omits action targets and caller-provided action metadata. Delivery is
+best-effort, with a configurable 2-second default timeout, and is not crash-proof
+or backed by an outbox. The Ledger provides tamper-evident records, not
+tamper-proof storage. Ledger availability does not affect killcord's trip,
+counter, or resume decisions.
 
 ## Contributing
 

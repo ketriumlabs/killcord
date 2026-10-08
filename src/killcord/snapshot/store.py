@@ -15,6 +15,7 @@ Two kinds of state live on disk here, both as plain JSON files anyone can
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import secrets
@@ -80,7 +81,9 @@ class PendingSnapshot:
     action: Action
     reason: str
     tripped_at: float
+    trip_id: str = ""
     decision: DecisionValue | None = None
+    decided_at: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -88,17 +91,25 @@ class PendingSnapshot:
             "action": self.action.to_dict(),
             "reason": self.reason,
             "tripped_at": self.tripped_at,
+            "trip_id": self.trip_id,
             "decision": self.decision,
+            "decided_at": self.decided_at,
         }
 
     @staticmethod
     def from_dict(d: dict[str, Any]) -> PendingSnapshot:
+        token = d["token"]
+        # Older snapshots only contain the bearer token. Derive a stable,
+        # non-secret correlation ID without exposing that token externally.
+        trip_id = d.get("trip_id") or hashlib.sha256(token.encode()).hexdigest()[:32]
         return PendingSnapshot(
-            token=d["token"],
+            token=token,
             action=Action.from_dict(d["action"]),
             reason=d["reason"],
             tripped_at=d["tripped_at"],
+            trip_id=trip_id,
             decision=d.get("decision"),
+            decided_at=d.get("decided_at"),
         )
 
 
@@ -107,6 +118,8 @@ class Decision:
     token: str
     approved: bool
     action: Action
+    trip_id: str = ""
+    event_at: float = 0.0
 
 
 class SnapshotStore:
@@ -175,6 +188,7 @@ class SnapshotStore:
                 action=action,
                 reason=reason,
                 tripped_at=time.time(),
+                trip_id=secrets.token_hex(16),
             )
             atomic_write_text(self._pending_path, json.dumps(snapshot.to_dict()))
         return snapshot
@@ -198,6 +212,7 @@ class SnapshotStore:
             if pending.decision == requested:
                 return pending
             pending.decision = requested
+            pending.decided_at = time.time()
             atomic_write_text(self._pending_path, json.dumps(pending.to_dict()))
         return pending
 
@@ -228,4 +243,6 @@ class SnapshotStore:
                 token=pending.token,
                 approved=pending.decision == "approved",
                 action=pending.action,
+                trip_id=pending.trip_id,
+                event_at=pending.decided_at or pending.tripped_at,
             )

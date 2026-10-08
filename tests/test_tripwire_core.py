@@ -10,6 +10,7 @@ from hypothesis import strategies as st
 from killcord.core.action import Action
 from killcord.core.rate import Rate
 from killcord.core.tripwire import Tripwire, TripwireTripped
+from killcord.snapshot.store import PendingSnapshot
 
 
 def make_tripwire(store_dir: Path, **kwargs: object) -> Tripwire:
@@ -20,6 +21,59 @@ def test_no_limits_never_trips(store_dir: Path) -> None:
     tw = make_tripwire(store_dir)
     for i in range(100):
         tw.check(Action(tool="anything", target=f"x{i}.com"))
+
+
+def test_ledger_trip_and_decision_share_persisted_trip_id(store_dir: Path) -> None:
+    class Sink:
+        events: list[dict[str, str]] = []
+
+        def emit(self, **event: str) -> None:
+            self.events.append(event)
+
+    sink = Sink()
+    tw = make_tripwire(store_dir, max_actions=0, ledger=sink)
+    with pytest.raises(TripwireTripped) as caught:
+        tw.check(Action(tool="secret-tool", target="https://user:secret@example.com/path"))
+    pending = tw.store.read_pending()
+    assert pending is not None
+    trip_id = pending.trip_id
+    assert trip_id and trip_id != caught.value.snapshot_id
+    tw.store.decide(caught.value.snapshot_id, approved=False)
+    tw.resume(caught.value.snapshot_id)
+
+    assert [event["trip_id"] for event in sink.events] == [trip_id, trip_id]
+    assert [event["event_key"] for event in sink.events] == [
+        f"killcord:{trip_id}:trip",
+        f"killcord:{trip_id}:decision",
+    ]
+
+
+def test_resume_succeeds_when_ledger_sink_raises(store_dir: Path) -> None:
+    class RaisingSink:
+        def emit(self, **event: str) -> None:
+            raise RuntimeError("sink unavailable")
+
+    tw = make_tripwire(store_dir, max_actions=0, ledger=RaisingSink())
+    with pytest.raises(TripwireTripped) as caught:
+        tw.check(Action(tool="x"))
+    tw.store.decide(caught.value.snapshot_id, approved=True)
+    decision = tw.resume(caught.value.snapshot_id)
+    assert decision.approved
+    assert tw.store.load_state().action_count == 1
+
+
+def test_legacy_pending_snapshot_gets_stable_nonsecret_trip_id() -> None:
+    legacy = {
+        "token": "bearer-secret-token",
+        "action": {"tool": "x", "target": None, "spend": None, "metadata": {}},
+        "reason": "limit",
+        "tripped_at": 1.0,
+        "decision": None,
+    }
+    loaded = PendingSnapshot.from_dict(legacy)
+    assert loaded.trip_id
+    assert loaded.trip_id != legacy["token"]
+    assert PendingSnapshot.from_dict(legacy).trip_id == loaded.trip_id
 
 
 def test_max_actions_trips_exactly_at_cap(store_dir: Path) -> None:
